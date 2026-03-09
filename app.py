@@ -20,7 +20,7 @@ with st.sidebar:
     sub_color = st.color_picker("Colore Testo", "#FFFFFF")
     font_size = st.slider("Grandezza", 30, 70, 48)
 
-# --- MOTORE RENDERING (INVARIATO) ---
+# --- MOTORE RENDERING (FIXED) ---
 def render_reel(data, video_path, smooth, dz, color, f_size):
     with st.status(f"🎬 Creazione: {data['title']}...") as status:
         clip = VideoFileClip(video_path).subclipped(data['start'], data['end'])
@@ -59,13 +59,15 @@ def render_reel(data, video_path, smooth, dz, color, f_size):
                 return get_frame(t)[:, int(x1):int(x1+target_w)]
 
             tracked = clip.transform(camera_op).with_effects([FadeIn(0.5), FadeOut(1.0)])
+            
+            # --- FIX SOTTOTITOLI ---
             try:
                 txt = (TextClip(text=data['title'].upper(), font_size=f_size, color=color, 
-                               stroke_color='black', stroke_width=2, method='caption', 
-                               font="/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+                               stroke_color='black', stroke_width=2, method='caption',
                                size=(int(target_w*0.8), None)).with_duration(clip.duration).with_position(('center', 180)))
                 final_v = CompositeVideoClip([tracked, txt])
-            except:
+            except Exception as e:
+                st.warning(f"Sottotitoli non generati (ImageMagick issue): {e}")
                 final_v = tracked
                 
             out_name = f"REEL_{int(time.time())}.mp4"
