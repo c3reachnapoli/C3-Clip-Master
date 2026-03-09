@@ -105,31 +105,38 @@ if drive_url and API_KEY:
                 gdown.download(id=id_drive, output="input.mp4", quiet=False)
                 
             if os.path.exists("input.mp4"):
-                # --- FIX 404: FORZIAMO VERSIONE STABILE ---
+                # --- FIX 404 DEFINITIVO: CONFIGURAZIONE STANDARD ---
                 genai.configure(api_key=API_KEY)
-                # Chiamata esplicita senza prefissi beta
+                
+                # Non usiamo prefissi, lasciamo che l'SDK scelga v1 stabile
                 model = genai.GenerativeModel('gemini-1.5-flash')
                 
                 with st.status("🧠 L'AI sta studiando il messaggio...") as status:
                     v_ai = genai.upload_file("input.mp4")
                     
-                    # Attendiamo lo stato ACTIVE (Polling)
+                    # Aspettiamo tassativamente lo stato ACTIVE
                     while v_ai.state.name == "PROCESSING":
-                        time.sleep(4)
+                        time.sleep(5) # Attendiamo 5 secondi per dare respiro ai server
                         v_ai = genai.get_file(v_ai.name)
                     
                     if v_ai.state.name == "ACTIVE":
                         prompt = "Trova 10 momenti carismatici (30-50s) con senso logico completo. Rispondi SOLO in formato JSON: [{'start': secondi, 'end': secondi, 'title': 'Titolo'}]"
+                        
+                        # Chiamata pulita
                         response = model.generate_content([v_ai, prompt])
                         
-                        # Parsing JSON robusto
+                        # Parsing JSON con isolamento parentesi quadre
                         raw_response = response.text
                         json_start = raw_response.find("[")
                         json_end = raw_response.rfind("]") + 1
-                        st.session_state.clips = json.loads(raw_response[json_start:json_end])
-                        st.success("Trovati 10 momenti!")
+                        
+                        if json_start != -1:
+                            st.session_state.clips = json.loads(raw_response[json_start:json_end])
+                            st.success("Trovati 10 momenti!")
+                        else:
+                            st.error("L'AI ha risposto senza formato JSON. Riprova.")
                     else:
-                        st.error(f"File non pronto. Stato: {v_ai.state.name}")
+                        st.error(f"Errore caricamento: Stato {v_ai.state.name}")
         except Exception as e:
             st.error(f"Errore tecnico: {e}")
 
