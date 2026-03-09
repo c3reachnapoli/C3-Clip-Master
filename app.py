@@ -1,20 +1,17 @@
 import streamlit as st
 import gdown, os, json, time
 import numpy as np
-import google.generativeai as genai
+from google import genai
 import mediapipe as mp
 from moviepy import VideoFileClip, TextClip, CompositeVideoClip
 from moviepy.video.fx import FadeIn, FadeOut
 
-st.set_page_config(page_title="C3 Reach Napoli - AI Engine", layout="wide")
+st.set_page_config(page_title="C3 Reach Napoli - New Engine", layout="wide")
 
 # --- SECRETS ---
-if "GEMINI_API_KEY" in st.secrets:
-    API_KEY = st.secrets["GEMINI_API_KEY"]
-else:
-    API_KEY = st.sidebar.text_input("Inserisci Gemini API Key", type="password")
+API_KEY = st.secrets.get("GEMINI_API_KEY") or st.sidebar.text_input("Inserisci Gemini API Key", type="password")
 
-# --- SIDEBAR ---
+# --- SIDEBAR REGIA ---
 with st.sidebar:
     st.image("https://images.squarespace-cdn.com/content/v1/5f1ef45f8e53995874492379/1596794646734-7B0X8W7L8O7B7X7X7X7X/C3-Global-Logo-Black.png", width=120)
     st.header("⚙️ Regia")
@@ -23,7 +20,7 @@ with st.sidebar:
     sub_color = st.color_picker("Colore Testo", "#FFFFFF")
     font_size = st.slider("Grandezza", 30, 70, 48)
 
-# --- MOTORE RENDERING ---
+# --- MOTORE RENDERING (INVARIATO) ---
 def render_reel(data, video_path, smooth, dz, color, f_size):
     with st.status(f"🎬 Creazione: {data['title']}...") as status:
         clip = VideoFileClip(video_path).subclipped(data['start'], data['end'])
@@ -62,7 +59,6 @@ def render_reel(data, video_path, smooth, dz, color, f_size):
                 return get_frame(t)[:, int(x1):int(x1+target_w)]
 
             tracked = clip.transform(camera_op).with_effects([FadeIn(0.5), FadeOut(1.0)])
-            
             try:
                 txt = (TextClip(text=data['title'].upper(), font_size=f_size, color=color, 
                                stroke_color='black', stroke_width=2, method='caption', 
@@ -77,56 +73,51 @@ def render_reel(data, video_path, smooth, dz, color, f_size):
             return out_name
 
 # --- INTERFACCIA ---
-st.title("🚀 C3 Reach: Motore AI")
-drive_url = st.text_input("Link Google Drive del video (Accesso Pubblico)")
+st.title("🚀 C3 Reach: Motore AI (V3.0)")
+drive_url = st.text_input("Link Google Drive del video")
 
 if drive_url and API_KEY:
     if st.button("📥 Importa e Analizza"):
         try:
+            client = genai.Client(api_key=API_KEY)
+            
             with st.spinner("1. Scarico video da Drive..."):
                 id_drive = drive_url.split('/')[-2] if 'view' in drive_url else drive_url.split('id=')[-1]
                 if os.path.exists("input.mp4"): os.remove("input.mp4")
                 gdown.download(id=id_drive, output="input.mp4", quiet=False)
             
-            with st.spinner("2. Preparazione audio per l'AI..."):
+            with st.spinner("2. Preparazione audio..."):
                 v = VideoFileClip("input.mp4")
                 v.audio.write_audiofile("audio.mp3", logger=None)
                 v.close()
             
-            with st.status("🧠 3. Interrogo Gemini...") as status:
-                genai.configure(api_key=API_KEY)
+            with st.status("🧠 3. Interrogo Gemini (New SDK)...") as status:
+                # Nuovo metodo di upload
+                audio_upload = client.files.upload(path="audio.mp3")
                 
-                # Caricamento del file audio
-                audio_file = genai.upload_file(path="audio.mp3")
-                
-                while audio_file.state.name == "PROCESSING":
+                # Polling stato
+                while audio_upload.state.name == "PROCESSING":
                     time.sleep(3)
-                    audio_file = genai.get_file(audio_file.name)
+                    audio_upload = client.files.get(name=audio_upload.name)
                 
-                if audio_file.state.name == "ACTIVE":
-                    # Usiamo la dicitura "-latest" per evitare conflitti di versione
-                    model = genai.GenerativeModel('gemini-1.5-flash-latest')
-                    prompt = "Trova i 10 momenti più carismatici (30-50s ciascuno). Rispondi SOLO con una lista JSON nel formato: [{'start': secondi, 'end': secondi, 'title': 'Titolo'}]"
-                    
-                    response = model.generate_content([audio_file, prompt])
-                    
-                    # Parsing robusto
-                    raw_text = response.text
-                    start_idx = raw_text.find("[")
-                    end_idx = raw_text.rfind("]") + 1
-                    
-                    if start_idx != -1:
-                        st.session_state.clips = json.loads(raw_text[start_idx:end_idx])
-                        st.success("Trovati 10 momenti!")
-                    else:
-                        st.error("L'AI non ha formattato bene la risposta. Riprova.")
-                else:
-                    st.error(f"Errore lato Google: File in stato {audio_file.state.name}")
+                # Generazione contenuto con nuova sintassi
+                response = client.models.generate_content(
+                    model="gemini-1.5-flash",
+                    contents=[
+                        audio_upload,
+                        "Trova i 10 momenti più potenti (30-50s ciascuno). Rispondi SOLO con una lista JSON: [{'start': secondi, 'end': secondi, 'title': 'Titolo'}]"
+                    ]
+                )
+                
+                raw_text = response.text
+                start_idx = raw_text.find("[")
+                end_idx = raw_text.rfind("]") + 1
+                st.session_state.clips = json.loads(raw_text[start_idx:end_idx])
+                st.success("Trovati 10 momenti!")
 
         except Exception as e:
             st.error(f"Errore tecnico: {e}")
 
-    # --- GRIGLIA ANTEPRIME ---
     if 'clips' in st.session_state:
         st.divider()
         grid = st.columns(2)
@@ -134,9 +125,7 @@ if drive_url and API_KEY:
             with grid[i % 2]:
                 with st.container(border=True):
                     st.subheader(f"Opzione {i+1}: {clip.get('title', 'Senza Titolo')}")
-                    st.write(f"⏱ Segmento: {clip.get('start')}s - {clip.get('end')}s")
-                    if st.button(f"⚡ Renderizza Reel {i+1}", key=f"r_{i}"):
+                    if st.button(f"⚡ Crea Reel {i+1}", key=f"r_{i}"):
                         f_out = render_reel(clip, "input.mp4", inerzia, dead_zone, sub_color, font_size)
-                        if f_out:
-                            with open(f_out, "rb") as f:
-                                st.download_button("📥 Scarica", f, file_name=f_out)
+                        with open(f_out, "rb") as f:
+                            st.download_button("📥 Scarica", f, file_name=f_out)
