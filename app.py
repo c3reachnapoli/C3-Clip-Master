@@ -105,22 +105,21 @@ if drive_url and API_KEY:
                 gdown.download(id=id_drive, output="input.mp4", quiet=False)
                 
             if os.path.exists("input.mp4"):
-                # --- FIX 404: FORZIAMO VERSIONE V1 ---
+                # --- FIX 404: FORZIAMO VERSIONE STABILE ---
                 genai.configure(api_key=API_KEY)
-                # Chiamata esplicita al modello stabile senza prefissi v1beta
+                # Chiamata esplicita senza prefissi beta
                 model = genai.GenerativeModel('gemini-1.5-flash')
                 
                 with st.status("🧠 L'AI sta studiando il messaggio...") as status:
                     v_ai = genai.upload_file("input.mp4")
                     
-                    # Attendiamo lo stato ACTIVE
+                    # Attendiamo lo stato ACTIVE (Polling)
                     while v_ai.state.name == "PROCESSING":
                         time.sleep(4)
                         v_ai = genai.get_file(v_ai.name)
                     
                     if v_ai.state.name == "ACTIVE":
                         prompt = "Trova 10 momenti carismatici (30-50s) con senso logico completo. Rispondi SOLO in formato JSON: [{'start': secondi, 'end': secondi, 'title': 'Titolo'}]"
-                        # Generazione contenuto
                         response = model.generate_content([v_ai, prompt])
                         
                         # Parsing JSON robusto
