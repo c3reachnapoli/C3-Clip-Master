@@ -5,3 +5,4 @@ mediapipe
 moviepy
 numpy
 opencv-python-headless
+requests
