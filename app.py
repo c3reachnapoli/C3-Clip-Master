@@ -1,35 +1,60 @@
 import streamlit as st
-import gdown, os, json, time, cv2
+import gdown, os, json, time, base64, requests
 import numpy as np
-import google.generativeai as genai
 import mediapipe as mp
 from moviepy import VideoFileClip, TextClip, CompositeVideoClip
 from moviepy.video.fx import FadeIn, FadeOut
 
-st.set_page_config(page_title="C3 Reach Napoli - Pro AI", layout="wide", page_icon="🎬")
+# --- CONFIGURAZIONE ---
+st.set_page_config(page_title="C3 Reach Napoli - Direct Engine", layout="wide")
 
-# --- SECRETS ---
 if "GEMINI_API_KEY" in st.secrets:
     API_KEY = st.secrets["GEMINI_API_KEY"]
 else:
-    API_KEY = st.sidebar.text_input("Inserisci Gemini API Key", type="password")
+    API_KEY = st.sidebar.text_input("Inserisci API Key", type="password")
 
-# --- SIDEBAR ---
+# --- SIDEBAR REGIA ---
 with st.sidebar:
-    st.image("https://images.squarespace-cdn.com/content/v1/5f1ef45f8e53995874492379/1596794646734-7B0X8W7L8O7B7X7X7X7X/C3-Global-Logo-Black.png", width=120)
-    st.header("⚙️ Regia")
+    st.header("⚙️ Parametri")
     inerzia = st.slider("Fluidità", 0.01, 0.15, 0.06)
     dead_zone = st.slider("Stabilità", 0.05, 0.25, 0.12)
     sub_color = st.color_picker("Colore Testo", "#FFFFFF")
-    font_size = st.slider("Grandezza", 30, 70, 48)
+    font_size = st.slider("Grandezza", 30, 70, 45)
 
-# --- FUNZIONE RENDERING ---
+# --- FUNZIONE CHIAMATA DIRETTA API (No SDK) ---
+def call_gemini_direct(audio_path, key):
+    with open(audio_path, "rb") as f:
+        audio_data = base64.b64encode(f.read()).decode('utf-8')
+    
+    # Endpoint STABILE v1 (Niente Beta)
+    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={key}"
+    
+    payload = {
+        "contents": [{
+            "parts": [
+                {"text": "Analizza l'audio e trova 10 momenti carismatici (30-50s). Rispondi SOLO JSON: [{'start': s, 'end': s, 'title': 'T'}]"},
+                {"inline_data": {"mime_type": "audio/mp3", "data": audio_data}}
+            ]
+        }],
+        "generationConfig": {"response_mime_type": "application/json"}
+    }
+    
+    response = requests.post(url, json=payload)
+    if response.status_code == 200:
+        res_json = response.json()
+        text_content = res_json['candidates'][0]['content']['parts'][0]['text']
+        return json.loads(text_content)
+    else:
+        raise Exception(f"Errore Google API {response.status_code}: {response.text}")
+
+# --- MOTORE RENDERING ---
 def render_reel(data, video_path, smooth, dz, color, f_size):
     with st.status(f"🎬 Creazione: {data['title']}...") as status:
         clip = VideoFileClip(video_path).subclipped(data['start'], data['end'])
         w_orig, h_orig = clip.size
         target_w = int(h_orig * (9/16))
         
+        # Download MediaPipe Detector
         if not os.path.exists('detector.tflite'):
             import urllib.request
             urllib.request.urlretrieve("https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite", "detector.tflite")
@@ -62,50 +87,43 @@ def render_reel(data, video_path, smooth, dz, color, f_size):
                 return get_frame(t)[:, int(x1):int(x1+target_w)]
 
             tracked = clip.transform(camera_op).with_effects([FadeIn(0.5), FadeOut(1.0)])
-            txt = (TextClip(text=data['title'].upper(), font_size=f_size, color=color, 
-                           stroke_color='black', stroke_width=2, method='caption', 
-                           font="/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-                           size=(int(target_w*0.8), None)).with_duration(clip.duration).with_position(('center', 180)))
             
+            try:
+                txt = (TextClip(text=data['title'].upper(), font_size=f_size, color=color, 
+                               stroke_color='black', stroke_width=2, method='caption', 
+                               font="/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+                               size=(int(target_w*0.8), None)).with_duration(clip.duration).with_position(('center', 180)))
+                final_v = CompositeVideoClip([tracked, txt])
+            except:
+                final_v = tracked
+                
             out_name = f"REEL_{int(time.time())}.mp4"
-            CompositeVideoClip([tracked, txt]).write_videofile(out_name, codec="libx264", audio_codec="aac", fps=24, logger=None)
+            final_v.write_videofile(out_name, codec="libx264", audio_codec="aac", fps=24, logger=None)
             return out_name
 
-# --- UI ---
-st.title("🚀 C3 Reach: Pro AI (Piano B - Audio Analysis)")
-drive_url = st.text_input("Link Google Drive (Accesso pubblico)")
+# --- INTERFACCIA ---
+st.title("🎬 C3 Reach: Pro AI (Direct Pipeline)")
+
+drive_url = st.text_input("Link Google Drive del video")
 
 if drive_url and API_KEY:
-    if st.button("📥 Importa e Analizza"):
+    if st.button("🚀 Analizza e Proponi 10 Reel"):
         try:
-            with st.spinner("Scarico video..."):
+            with st.spinner("1. Scarico da Drive..."):
                 id_drive = drive_url.split('/')[-2] if 'view' in drive_url else drive_url.split('id=')[-1]
                 gdown.download(id=id_drive, output="input.mp4", quiet=False)
             
-            with st.spinner("Estrapolazione audio..."):
-                video = VideoFileClip("input.mp4")
-                video.audio.write_audiofile("input_audio.mp3")
-                video.close()
+            with st.spinner("2. Estraggo Audio..."):
+                v = VideoFileClip("input.mp4")
+                v.audio.write_audiofile("temp_audio.mp3", logger=None)
+                v.close()
             
-            with st.spinner("L'AI sta ascoltando il messaggio..."):
-                genai.configure(api_key=API_KEY)
-                model = genai.GenerativeModel('gemini-1.5-flash')
-                
-                # Carichiamo l'audio (molto più piccolo, evita errori 404/timeout)
-                audio_file = genai.upload_file("input_audio.mp3")
-                while audio_file.state.name == "PROCESSING":
-                    time.sleep(2)
-                    audio_file = genai.get_file(audio_file.name)
-                
-                prompt = "Ascolta l'audio della predicazione. Trova i 10 momenti più carismatici (30-50s ciascuno). Rispondi SOLO in formato JSON: [{'start': secondi, 'end': secondi, 'title': 'Titolo'}]"
-                response = model.generate_content([audio_file, prompt])
-                
-                raw = response.text
-                st.session_state.clips = json.loads(raw[raw.find("["):raw.rfind("]")+1])
-                st.success("Trovati 10 momenti!")
-                
+            with st.spinner("3. Analisi AI Diretta..."):
+                st.session_state.clips = call_gemini_direct("temp_audio.mp3", API_KEY)
+                st.success(f"Analisi completata! Trovati {len(st.session_state.clips)} momenti.")
+
         except Exception as e:
-            st.error(f"Errore: {e}")
+            st.error(f"Errore tecnico: {e}")
 
     if 'clips' in st.session_state:
         grid = st.columns(2)
@@ -113,7 +131,7 @@ if drive_url and API_KEY:
             with grid[i % 2]:
                 with st.container(border=True):
                     st.subheader(f"Opzione {i+1}: {clip['title']}")
-                    if st.button(f"⚡ Crea Reel {i+1}", key=f"r_{i}"):
+                    if st.button(f"⚡ Renderizza Reel {i+1}", key=f"btn_{i}"):
                         f_out = render_reel(clip, "input.mp4", inerzia, dead_zone, sub_color, font_size)
                         with open(f_out, "rb") as f:
                             st.download_button("📥 Scarica", f, file_name=f_out)
