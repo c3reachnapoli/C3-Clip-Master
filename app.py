@@ -1,80 +1,27 @@
 import streamlit as st
-import gdown, os, json, time, base64, requests
+import gdown, os, json, time
 import numpy as np
+import google.generativeai as genai
 import mediapipe as mp
 from moviepy import VideoFileClip, TextClip, CompositeVideoClip
 from moviepy.video.fx import FadeIn, FadeOut
 
-# --- CONFIGURAZIONE ---
-st.set_page_config(page_title="C3 Reach Napoli - Direct Engine", layout="wide")
+st.set_page_config(page_title="C3 Reach Napoli - Colab Edition", layout="wide")
 
+# --- SECRETS ---
 if "GEMINI_API_KEY" in st.secrets:
     API_KEY = st.secrets["GEMINI_API_KEY"]
 else:
-    API_KEY = st.sidebar.text_input("Inserisci API Key", type="password")
+    API_KEY = st.sidebar.text_input("Inserisci Gemini API Key", type="password")
 
-# --- SIDEBAR REGIA ---
+# --- SIDEBAR ---
 with st.sidebar:
-    st.header("⚙️ Parametri")
+    st.image("https://images.squarespace-cdn.com/content/v1/5f1ef45f8e53995874492379/1596794646734-7B0X8W7L8O7B7X7X7X7X/C3-Global-Logo-Black.png", width=120)
+    st.header("⚙️ Regia")
     inerzia = st.slider("Fluidità", 0.01, 0.15, 0.06)
     dead_zone = st.slider("Stabilità", 0.05, 0.25, 0.12)
     sub_color = st.color_picker("Colore Testo", "#FFFFFF")
-    font_size = st.slider("Grandezza", 30, 70, 45)
-
-# --- FUNZIONE CHIAMATA DIRETTA API CORRETTA ---
-def call_gemini_direct(audio_path, key):
-    with open(audio_path, "rb") as f:
-        audio_data = base64.b64encode(f.read()).decode('utf-8')
-    
-    # Endpoint v1 (Stabile)
-    url = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={key}"
-    
-    # Payload semplificato e corretto per v1
-    payload = {
-        "contents": [{
-            "parts": [
-                {"text": "Analizza l'audio e trova i 10 momenti più potenti (30-50s ciascuno). Rispondi ESCLUSIVAMENTE con una lista JSON valida, senza testo aggiuntivo, usando questo formato: [{'start': secondi, 'end': secondi, 'title': 'Titolo'}]"},
-                {"inline_data": {"mime_type": "audio/mp3", "data": audio_data}}
-            ]
-        }],
-        "generationConfig": {
-            "temperature": 0.2,
-            "topP": 0.8,
-            "topK": 40
-        }
-    }
-    
-    response = requests.post(url, json=payload)
-    if response.status_code == 200:
-        res_json = response.json()
-        raw_text = res_json['candidates'][0]['content']['parts'][0]['text']
-        
-        # Pulizia manuale del JSON (rimuove eventuali ```json o testo extra)
-        try:
-            start_idx = raw_text.find("[")
-            end_idx = raw_text.rfind("]") + 1
-            json_data = json.loads(raw_text[start_idx:end_idx])
-            return json_data
-        except Exception:
-            st.error(f"Errore nel formato ricevuto dall'AI: {raw_text[:200]}")
-            return None
-    else:
-        raise Exception(f"Errore Google API {response.status_code}: {response.text}")
-
-# --- AGGIORNAMENTO NELL'INTERFACCIA ---
-# (Assicurati che nel corpo principale dell'app ci sia questo controllo)
-if 'clips' in st.session_state and st.session_state.clips:
-    st.divider()
-    grid = st.columns(2)
-    for i, clip in enumerate(st.session_state.clips):
-        with grid[i % 2]:
-            with st.container(border=True):
-                st.subheader(f"Opzione {i+1}: {clip.get('title', 'Senza Titolo')}")
-                st.write(f"⏱ {clip.get('start')}s - {clip.get('end')}s")
-                if st.button(f"⚡ Renderizza Reel {i+1}", key=f"btn_{i}"):
-                    f_out = render_reel(clip, "input.mp4", inerzia, dead_zone, sub_color, font_size)
-                    with open(f_out, "rb") as f:
-                        st.download_button("📥 Scarica", f, file_name=f_out)
+    font_size = st.slider("Grandezza", 30, 70, 48)
 
 # --- MOTORE RENDERING ---
 def render_reel(data, video_path, smooth, dz, color, f_size):
@@ -83,7 +30,6 @@ def render_reel(data, video_path, smooth, dz, color, f_size):
         w_orig, h_orig = clip.size
         target_w = int(h_orig * (9/16))
         
-        # Download MediaPipe Detector
         if not os.path.exists('detector.tflite'):
             import urllib.request
             urllib.request.urlretrieve("https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite", "detector.tflite")
@@ -131,36 +77,66 @@ def render_reel(data, video_path, smooth, dz, color, f_size):
             return out_name
 
 # --- INTERFACCIA ---
-st.title("🎬 C3 Reach: Pro AI (Direct Pipeline)")
-
-drive_url = st.text_input("Link Google Drive del video")
+st.title("🚀 C3 Reach: Motore AI")
+drive_url = st.text_input("Link Google Drive del video (Accesso Pubblico)")
 
 if drive_url and API_KEY:
-    if st.button("🚀 Analizza e Proponi 10 Reel"):
+    if st.button("📥 Importa e Analizza"):
         try:
-            with st.spinner("1. Scarico da Drive..."):
+            with st.spinner("1. Scarico video da Drive..."):
                 id_drive = drive_url.split('/')[-2] if 'view' in drive_url else drive_url.split('id=')[-1]
+                if os.path.exists("input.mp4"): os.remove("input.mp4")
                 gdown.download(id=id_drive, output="input.mp4", quiet=False)
             
-            with st.spinner("2. Estraggo Audio..."):
+            with st.spinner("2. Preparazione (estrazione audio per AI)..."):
                 v = VideoFileClip("input.mp4")
-                v.audio.write_audiofile("temp_audio.mp3", logger=None)
+                v.audio.write_audiofile("audio.mp3", logger=None)
                 v.close()
             
-            with st.spinner("3. Analisi AI Diretta..."):
-                st.session_state.clips = call_gemini_direct("temp_audio.mp3", API_KEY)
-                st.success(f"Analisi completata! Trovati {len(st.session_state.clips)} momenti.")
+            with st.status("🧠 3. Interrogo Gemini (Stile Colab)...") as status:
+                genai.configure(api_key=API_KEY)
+                
+                # Caricamento tramite l'API ufficiale (File API)
+                audio_file = genai.upload_file(path="audio.mp3")
+                
+                # Attendiamo che Google processi il file
+                while audio_file.state.name == "PROCESSING":
+                    time.sleep(3)
+                    audio_file = genai.get_file(audio_file.name)
+                
+                if audio_file.state.name == "ACTIVE":
+                    model = genai.GenerativeModel('gemini-1.5-flash')
+                    prompt = "Trova i 10 momenti più carismatici (30-50s ciascuno). Rispondi SOLO con una lista JSON nel formato: [{'start': secondi, 'end': secondi, 'title': 'Titolo'}]"
+                    
+                    response = model.generate_content([audio_file, prompt])
+                    
+                    # Parsing sicuro
+                    raw_text = response.text
+                    start_idx = raw_text.find("[")
+                    end_idx = raw_text.rfind("]") + 1
+                    
+                    if start_idx != -1:
+                        st.session_state.clips = json.loads(raw_text[start_idx:end_idx])
+                        st.success("Trovati 10 momenti!")
+                    else:
+                        st.error("L'AI non ha formattato bene la risposta. Riprova.")
+                else:
+                    st.error(f"Errore lato Google: File in stato {audio_file.state.name}")
 
         except Exception as e:
-            st.error(f"Errore tecnico: {e}")
+            st.error(f"Errore: {e}")
 
+    # --- GRIGLIA ANTEPRIME ---
     if 'clips' in st.session_state:
+        st.divider()
         grid = st.columns(2)
         for i, clip in enumerate(st.session_state.clips):
             with grid[i % 2]:
                 with st.container(border=True):
-                    st.subheader(f"Opzione {i+1}: {clip['title']}")
-                    if st.button(f"⚡ Renderizza Reel {i+1}", key=f"btn_{i}"):
+                    st.subheader(f"Opzione {i+1}: {clip.get('title', 'Senza Titolo')}")
+                    st.write(f"⏱ Segmento: {clip.get('start')}s - {clip.get('end')}s")
+                    if st.button(f"⚡ Renderizza Reel {i+1}", key=f"r_{i}"):
                         f_out = render_reel(clip, "input.mp4", inerzia, dead_zone, sub_color, font_size)
-                        with open(f_out, "rb") as f:
-                            st.download_button("📥 Scarica", f, file_name=f_out)
+                        if f_out:
+                            with open(f_out, "rb") as f:
+                                st.download_button("📥 Scarica", f, file_name=f_out)
