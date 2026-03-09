@@ -20,13 +20,14 @@ with st.sidebar:
     sub_color = st.color_picker("Colore Testo", "#FFFFFF")
     font_size = st.slider("Grandezza", 30, 70, 48)
 
-# --- MOTORE RENDERING (FIXED) ---
+# --- MOTORE RENDERING (VERSIONE ROBUSTA) ---
 def render_reel(data, video_path, smooth, dz, color, f_size):
     with st.status(f"🎬 Creazione: {data['title']}...") as status:
         clip = VideoFileClip(video_path).subclipped(data['start'], data['end'])
         w_orig, h_orig = clip.size
         target_w = int(h_orig * (9/16))
         
+        # Caricamento detector MediaPipe
         if not os.path.exists('detector.tflite'):
             import urllib.request
             urllib.request.urlretrieve("https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite", "detector.tflite")
@@ -44,6 +45,7 @@ def render_reel(data, video_path, smooth, dz, color, f_size):
                 val = (res.detections[0].bounding_box.origin_x + res.detections[0].bounding_box.width/2)/w_orig if res.detections else None
                 raw_pos.append(val)
             
+            # Calcolo fluidità camera
             final_coords = []
             cam_x = 0.5
             for p in raw_pos:
@@ -60,14 +62,15 @@ def render_reel(data, video_path, smooth, dz, color, f_size):
 
             tracked = clip.transform(camera_op).with_effects([FadeIn(0.5), FadeOut(1.0)])
             
-            # --- FIX SOTTOTITOLI ---
+            # --- TENTATIVO SOTTOTITOLI ---
             try:
+                # Se TextClip fallisce su Streamlit Cloud, l'app continuerà a funzionare senza testi
                 txt = (TextClip(text=data['title'].upper(), font_size=f_size, color=color, 
                                stroke_color='black', stroke_width=2, method='caption',
                                size=(int(target_w*0.8), None)).with_duration(clip.duration).with_position(('center', 180)))
                 final_v = CompositeVideoClip([tracked, txt])
             except Exception as e:
-                st.warning(f"Sottotitoli non generati (ImageMagick issue): {e}")
+                st.warning("⚠️ Nota: Sottotitoli saltati per configurazione server, ma il video è pronto!")
                 final_v = tracked
                 
             out_name = f"REEL_{int(time.time())}.mp4"
