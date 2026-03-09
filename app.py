@@ -26,38 +26,39 @@ with st.sidebar:
     st.header("🎨 Stile Sottotitoli")
     sub_color = st.color_picker("Colore Testo", "#FFFFFF")
     font_size = st.slider("Grandezza Testo", 30, 70, 48)
-    st.info("I sottotitoli avranno un bordo nero per la massima leggibilità.")
+    st.info("Sottotitoli bianchi con bordo nero per massima leggibilità.")
 
 # --- MOTORE DI RENDERING CINEMATICO ---
 def render_reel(data, video_path, smooth, dz, color, f_size):
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
     with st.status(f"🎬 Elaborazione: {data['title']}...", expanded=True) as status:
-        # Caricamento Clip
+        status_text.text("🎞️ Caricamento clip...")
         clip = VideoFileClip(video_path).subclipped(data['start'], data['end'])
         w_orig, h_orig = clip.size
         target_w = int(h_orig * (9/16))
         
-        # Download modello MediaPipe se mancante
         if not os.path.exists('detector.tflite'):
             import urllib.request
             urllib.request.urlretrieve("https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite", "detector.tflite")
         
-        # Setup Detector
         options = mp.tasks.vision.FaceDetectorOptions(
             base_options=mp.tasks.BaseOptions(model_asset_path='detector.tflite'),
             running_mode=mp.tasks.vision.RunningMode.IMAGE)
         
         with mp.tasks.vision.FaceDetector.create_from_options(options) as detector:
             raw_pos = []
-            st.write("🔍 Tracking volti in corso...")
-            for t in np.arange(0, clip.duration, 0.1):
+            status_text.text("🔍 Tracking volti (IA)...")
+            time_steps = np.arange(0, clip.duration, 0.1)
+            for i, t in enumerate(time_steps):
                 frame = clip.get_frame(t)
                 mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
                 res = detector.detect(mp_img)
-                # Calcolo centro X
                 val = (res.detections[0].bounding_box.origin_x + res.detections[0].bounding_box.width/2)/w_orig if res.detections else None
                 raw_pos.append(val)
+                progress_bar.progress(int((i / len(time_steps)) * 50)) # Primi 50% progresso
             
-            # Algoritmo Cinematico (Exponential Smoothing + Dead Zone)
             final_coords = []
             cam_x = 0.5
             for p in raw_pos:
@@ -74,10 +75,9 @@ def render_reel(data, video_path, smooth, dz, color, f_size):
                 x1 = max(0, min(cx - (target_w // 2), w_orig - target_w))
                 return get_frame(t)[:, int(x1):int(x1+target_w)]
 
-            # Trasformazione e VFX
+            status_text.text("🎨 Applicazione effetti e testi...")
             tracked = clip.transform(camera_op).with_effects([FadeIn(0.5), FadeOut(1.0)])
             
-            # Sottotitoli (Wrapped Caption)
             try:
                 txt = (TextClip(text=data['title'].upper(), font_size=f_size, color=color, 
                                stroke_color='black', stroke_width=2, method='caption', 
@@ -88,53 +88,54 @@ def render_reel(data, video_path, smooth, dz, color, f_size):
             except:
                 final_video = tracked
             
+            status_text.text("💾 Salvataggio file MP4...")
             output_filename = f"C3_REEL_{int(time.time())}.mp4"
             final_video.write_videofile(output_filename, codec="libx264", audio_codec="aac", fps=24, logger=None)
+            progress_bar.progress(100)
+            status_text.text("✅ Completato!")
             return output_filename
 
 # --- INTERFACCIA UTENTE ---
 st.title("🚀 C3 Reach: Pro AI Reel Factory")
-st.markdown("Incolla il link di **Google Drive** della predicazione per generare 10 proposte di Reel cinematografici.")
+st.markdown("Incolla il link di **Google Drive** della predicazione.")
 
-drive_url = st.text_input("Link Google Drive (Accesso pubblico necessario)", placeholder="https://drive.google.com/file/d/...")
+drive_url = st.text_input("Link Google Drive (Accesso pubblico)", placeholder="https://drive.google.com/file/d/...")
 
 if drive_url and API_KEY:
     if st.button("📥 Importa Video e Analizza con Gemini"):
         try:
             with st.spinner("Scaricamento video da Drive..."):
-                # Estrazione ID Drive
-                if 'id=' in drive_url:
-                    id_drive = drive_url.split('id=')[-1]
-                else:
-                    id_drive = drive_url.split('/')[-2]
-                
+                id_drive = drive_url.split('/')[-2] if 'view' in drive_url else drive_url.split('id=')[-1]
                 if os.path.exists("input.mp4"): os.remove("input.mp4")
                 gdown.download(id=id_drive, output="input.mp4", quiet=False)
                 
             if os.path.exists("input.mp4"):
                 genai.configure(api_key=API_KEY)
-                model = genai.GenerativeModel('gemini-1.5-flash')
+                # Forza modello stabile
+                model = genai.GenerativeModel(model_name='gemini-1.5-flash')
                 
                 with st.status("🧠 Gemini sta analizzando il messaggio...") as status:
                     v_ai = genai.upload_file("input.mp4")
-                    # Attesa che il file sia pronto sui server Google
                     while v_ai.state.name == "PROCESSING":
                         time.sleep(3)
                         v_ai = genai.get_file(v_ai.name)
                     
                     if v_ai.state.name == "ACTIVE":
-                        prompt = "Analizza il video. Trova 10 momenti potenti (30-50s) con senso logico compiuto. Rispondi SOLO JSON: [{'start': secondi, 'end': secondi, 'title': 'Titolo Breve'}]"
-                        response = model.generate_content([v_ai, prompt])
-                        # Pulizia risposta JSON
-                        json_clean = response.text.strip().replace('```json', '').replace('```', '')
-                        st.session_state.clips = json.loads(json_clean)
+                        prompt = "Trova 10 momenti potenti (30-50s) con senso logico. Rispondi SOLO in formato JSON: [{'start': 10.5, 'end': 45.0, 'title': 'Titolo'}]"
+                        response = model.generate_content(contents=[v_ai, prompt])
+                        
+                        # Parsing JSON Robusto
+                        raw_text = response.text
+                        json_start = raw_text.find("[")
+                        json_end = raw_text.rfind("]") + 1
+                        st.session_state.clips = json.loads(raw_text[json_start:json_end])
                         st.success("Analisi completata!")
                     else:
-                        st.error("Errore nel caricamento del file su Gemini.")
+                        st.error("Errore caricamento AI.")
         except Exception as e:
-            st.error(f"Errore durante l'importazione: {e}")
+            st.error(f"Errore tecnico: {e}")
 
-    # --- VISUALIZZAZIONE GRIGLIA 10 PROPOSTE ---
+    # --- GRIGLIA ANTEPRIME ---
     if 'clips' in st.session_state:
         st.divider()
         st.header("🎞️ Seleziona i Reel da produrre")
