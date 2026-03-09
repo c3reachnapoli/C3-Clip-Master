@@ -6,7 +6,7 @@ import mediapipe as mp
 from moviepy import VideoFileClip, TextClip, CompositeVideoClip
 from moviepy.video.fx import FadeIn, FadeOut
 
-st.set_page_config(page_title="C3 Reach Napoli - Colab Edition", layout="wide")
+st.set_page_config(page_title="C3 Reach Napoli - AI Engine", layout="wide")
 
 # --- SECRETS ---
 if "GEMINI_API_KEY" in st.secrets:
@@ -88,29 +88,29 @@ if drive_url and API_KEY:
                 if os.path.exists("input.mp4"): os.remove("input.mp4")
                 gdown.download(id=id_drive, output="input.mp4", quiet=False)
             
-            with st.spinner("2. Preparazione (estrazione audio per AI)..."):
+            with st.spinner("2. Preparazione audio per l'AI..."):
                 v = VideoFileClip("input.mp4")
                 v.audio.write_audiofile("audio.mp3", logger=None)
                 v.close()
             
-            with st.status("🧠 3. Interrogo Gemini (Stile Colab)...") as status:
+            with st.status("🧠 3. Interrogo Gemini...") as status:
                 genai.configure(api_key=API_KEY)
                 
-                # Caricamento tramite l'API ufficiale (File API)
+                # Caricamento del file audio
                 audio_file = genai.upload_file(path="audio.mp3")
                 
-                # Attendiamo che Google processi il file
                 while audio_file.state.name == "PROCESSING":
                     time.sleep(3)
                     audio_file = genai.get_file(audio_file.name)
                 
                 if audio_file.state.name == "ACTIVE":
-                    model = genai.GenerativeModel('gemini-1.5-flash')
+                    # Usiamo la dicitura "-latest" per evitare conflitti di versione
+                    model = genai.GenerativeModel('gemini-1.5-flash-latest')
                     prompt = "Trova i 10 momenti più carismatici (30-50s ciascuno). Rispondi SOLO con una lista JSON nel formato: [{'start': secondi, 'end': secondi, 'title': 'Titolo'}]"
                     
                     response = model.generate_content([audio_file, prompt])
                     
-                    # Parsing sicuro
+                    # Parsing robusto
                     raw_text = response.text
                     start_idx = raw_text.find("[")
                     end_idx = raw_text.rfind("]") + 1
@@ -124,7 +124,7 @@ if drive_url and API_KEY:
                     st.error(f"Errore lato Google: File in stato {audio_file.state.name}")
 
         except Exception as e:
-            st.error(f"Errore: {e}")
+            st.error(f"Errore tecnico: {e}")
 
     # --- GRIGLIA ANTEPRIME ---
     if 'clips' in st.session_state:
