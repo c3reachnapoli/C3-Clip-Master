@@ -4,4 +4,4 @@ google-genai
 mediapipe
 moviepy
 numpy
-opencv-python-headless
+opencv-python
