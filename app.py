@@ -5,9 +5,10 @@ import google.generativeai as genai
 import mediapipe as mp
 from moviepy import VideoFileClip, TextClip, CompositeVideoClip
 from moviepy.video.fx import FadeIn, FadeOut
+from google.api_core import exceptions
 
 # --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="C3 Reach Napoli - Pro Engine", layout="wide", page_icon="🎬")
+st.set_page_config(page_title="C3 Reach Napoli - AI Engine", layout="wide", page_icon="🎬")
 
 # --- GESTIONE API KEY (SECRETS) ---
 if "GEMINI_API_KEY" in st.secrets:
@@ -15,26 +16,23 @@ if "GEMINI_API_KEY" in st.secrets:
 else:
     API_KEY = st.sidebar.text_input("Inserisci Gemini API Key", type="password")
 
-# --- SIDEBAR: REGIA E STILE ---
+# --- SIDEBAR: REGIA ---
 with st.sidebar:
     st.image("https://images.squarespace-cdn.com/content/v1/5f1ef45f8e53995874492379/1596794646734-7B0X8W7L8O7B7X7X7X7X/C3-Global-Logo-Black.png", width=120)
-    st.header("🎮 Controlli AI")
-    inerzia = st.slider("Fluidità Camera (Inerzia)", 0.01, 0.15, 0.06, help="0.04 = Cinema, 0.10 = Reattivo")
-    dead_zone = st.slider("Stabilità (Dead Zone)", 0.05, 0.25, 0.12, help="Area centrale ferma")
-    
+    st.header("🎮 Controlli Regia")
+    inerzia = st.slider("Fluidità Camera", 0.01, 0.15, 0.06)
+    dead_zone = st.slider("Dead Zone (Stabilità)", 0.05, 0.25, 0.12)
     st.divider()
-    st.header("🎨 Stile Sottotitoli")
+    st.header("🎨 Sottotitoli")
     sub_color = st.color_picker("Colore Testo", "#FFFFFF")
-    font_size = st.slider("Grandezza Testo", 30, 70, 48)
-    st.info("Sottotitoli bianchi con bordo nero per massima leggibilità.")
+    font_size = st.slider("Grandezza", 30, 70, 48)
 
-# --- MOTORE DI RENDERING CINEMATICO ---
+# --- MOTORE DI RENDERING ---
 def render_reel(data, video_path, smooth, dz, color, f_size):
-    progress_bar = st.progress(0)
-    status_text = st.empty()
+    p_bar = st.progress(0)
+    status_txt = st.empty()
     
-    with st.status(f"🎬 Elaborazione: {data['title']}...", expanded=True) as status:
-        status_text.text("🎞️ Caricamento clip...")
+    with st.status(f"🎬 Creazione: {data['title']}...", expanded=True) as status:
         clip = VideoFileClip(video_path).subclipped(data['start'], data['end'])
         w_orig, h_orig = clip.size
         target_w = int(h_orig * (9/16))
@@ -49,7 +47,7 @@ def render_reel(data, video_path, smooth, dz, color, f_size):
         
         with mp.tasks.vision.FaceDetector.create_from_options(options) as detector:
             raw_pos = []
-            status_text.text("🔍 Tracking volti (IA)...")
+            status_txt.text("🔍 Analisi movimento volto...")
             time_steps = np.arange(0, clip.duration, 0.1)
             for i, t in enumerate(time_steps):
                 frame = clip.get_frame(t)
@@ -57,7 +55,7 @@ def render_reel(data, video_path, smooth, dz, color, f_size):
                 res = detector.detect(mp_img)
                 val = (res.detections[0].bounding_box.origin_x + res.detections[0].bounding_box.width/2)/w_orig if res.detections else None
                 raw_pos.append(val)
-                progress_bar.progress(int((i / len(time_steps)) * 50)) # Primi 50% progresso
+                p_bar.progress(int((i / len(time_steps)) * 40))
             
             final_coords = []
             cam_x = 0.5
@@ -65,8 +63,7 @@ def render_reel(data, video_path, smooth, dz, color, f_size):
                 if p is not None:
                     dist = p - cam_x
                     if abs(dist) > dz:
-                        target_move = p - (np.sign(dist) * dz)
-                        cam_x += (target_move - cam_x) * smooth
+                        cam_x += (p - (np.sign(dist)*dz) - cam_x) * smooth
                 final_coords.append(cam_x)
 
             def camera_op(get_frame, t):
@@ -75,7 +72,7 @@ def render_reel(data, video_path, smooth, dz, color, f_size):
                 x1 = max(0, min(cx - (target_w // 2), w_orig - target_w))
                 return get_frame(t)[:, int(x1):int(x1+target_w)]
 
-            status_text.text("🎨 Applicazione effetti e testi...")
+            status_txt.text("✨ Applicazione VFX e Titoli...")
             tracked = clip.transform(camera_op).with_effects([FadeIn(0.5), FadeOut(1.0)])
             
             try:
@@ -84,71 +81,63 @@ def render_reel(data, video_path, smooth, dz, color, f_size):
                                font="/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
                                size=(int(target_w*0.8), None))
                        .with_duration(clip.duration).with_position(('center', 180)))
-                final_video = CompositeVideoClip([tracked, txt])
+                final_v = CompositeVideoClip([tracked, txt])
             except:
-                final_video = tracked
+                final_v = tracked
             
-            status_text.text("💾 Salvataggio file MP4...")
-            output_filename = f"C3_REEL_{int(time.time())}.mp4"
-            final_video.write_videofile(output_filename, codec="libx264", audio_codec="aac", fps=24, logger=None)
-            progress_bar.progress(100)
-            status_text.text("✅ Completato!")
-            return output_filename
+            status_txt.text("💾 Generazione file MP4...")
+            out_name = f"C3_REEL_{int(time.time())}.mp4"
+            final_v.write_videofile(out_name, codec="libx264", audio_codec="aac", fps=24, logger=None)
+            p_bar.progress(100)
+            status_txt.text("✅ Reel pronto per il download!")
+            return out_name
 
-# --- INTERFACCIA UTENTE ---
-st.title("🚀 C3 Reach: Pro AI Reel Factory")
-st.markdown("Incolla il link di **Google Drive** della predicazione.")
-
-drive_url = st.text_input("Link Google Drive (Accesso pubblico)", placeholder="https://drive.google.com/file/d/...")
+# --- LOGICA PRINCIPALE ---
+st.title("🚀 C3 Reach: AI Reel Factory")
+drive_url = st.text_input("Link Google Drive (Accesso: Chiunque abbia il link)")
 
 if drive_url and API_KEY:
-    if st.button("📥 Importa Video e Analizza con Gemini"):
+    if st.button("📥 Importa e Analizza Video"):
         try:
-            with st.spinner("Scaricamento video da Drive..."):
+            with st.spinner("Download da Drive..."):
                 id_drive = drive_url.split('/')[-2] if 'view' in drive_url else drive_url.split('id=')[-1]
                 if os.path.exists("input.mp4"): os.remove("input.mp4")
                 gdown.download(id=id_drive, output="input.mp4", quiet=False)
                 
             if os.path.exists("input.mp4"):
-                genai.configure(api_key=API_KEY)
-                # Forza modello stabile
-                model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+                # FORZIAMO L'API V1 STABILE
+                genai.configure(api_key=API_KEY, transport='rest')
+                model = genai.GenerativeModel('models/gemini-1.5-flash')
                 
-                with st.status("🧠 Gemini sta analizzando il messaggio...") as status:
+                with st.status("🧠 Analisi concetti in corso...") as status:
                     v_ai = genai.upload_file("input.mp4")
                     while v_ai.state.name == "PROCESSING":
                         time.sleep(3)
                         v_ai = genai.get_file(v_ai.name)
                     
                     if v_ai.state.name == "ACTIVE":
-                        prompt = "Trova 10 momenti potenti (30-50s) con senso logico. Rispondi SOLO in formato JSON: [{'start': 10.5, 'end': 45.0, 'title': 'Titolo'}]"
-                        response = model.generate_content(contents=[v_ai, prompt])
+                        prompt = "Trova 10 momenti potenti (30-50s) con senso compiuto. Rispondi SOLO JSON: [{'start': 10.5, 'end': 45.0, 'title': 'TITOLO'}]"
+                        response = model.generate_content([v_ai, prompt])
                         
-                        # Parsing JSON Robusto
-                        raw_text = response.text
-                        json_start = raw_text.find("[")
-                        json_end = raw_text.rfind("]") + 1
-                        st.session_state.clips = json.loads(raw_text[json_start:json_end])
-                        st.success("Analisi completata!")
+                        # Parsing JSON sicuro
+                        raw = response.text
+                        st.session_state.clips = json.loads(raw[raw.find("["):raw.rfind("]")+1])
+                        st.success("Trovati 10 momenti!")
                     else:
-                        st.error("Errore caricamento AI.")
+                        st.error("L'AI non ha accettato il file. Riprova.")
         except Exception as e:
             st.error(f"Errore tecnico: {e}")
 
-    # --- GRIGLIA ANTEPRIME ---
+    # --- GRIGLIA ---
     if 'clips' in st.session_state:
         st.divider()
-        st.header("🎞️ Seleziona i Reel da produrre")
         grid = st.columns(2)
-        
         for i, clip in enumerate(st.session_state.clips):
             with grid[i % 2]:
                 with st.container(border=True):
                     st.subheader(f"Opzione {i+1}: {clip['title']}")
-                    st.info(f"⏱ Segmento: {clip['start']}s - {clip['end']}s")
-                    
                     if st.button(f"⚡ Renderizza Reel {i+1}", key=f"r_{i}"):
-                        file_out = render_reel(clip, "input.mp4", inerzia, dead_zone, sub_color, font_size)
-                        if file_out:
-                            with open(file_out, "rb") as f:
-                                st.download_button(f"📥 Scarica Reel {i+1}", f, file_name=file_out, mime="video/mp4")
+                        f_out = render_reel(clip, "input.mp4", inerzia, dead_zone, sub_color, font_size)
+                        if f_out:
+                            with open(f_out, "rb") as f:
+                                st.download_button(f"📥 Scarica Reel {i+1}", f, file_name=f_out)
