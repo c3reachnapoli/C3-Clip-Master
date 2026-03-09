@@ -1,7 +1,7 @@
 streamlit
-mediapipe
+gdown
 google-generativeai
+mediapipe
 moviepy
 numpy
 opencv-python-headless
-gdown
