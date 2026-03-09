@@ -5,23 +5,22 @@ import google.generativeai as genai
 import mediapipe as mp
 from moviepy import VideoFileClip, TextClip, CompositeVideoClip
 from moviepy.video.fx import FadeIn, FadeOut
-from google.api_core import exceptions
 
 # --- CONFIGURAZIONE PAGINA ---
-st.set_page_config(page_title="C3 Reach Napoli - AI Engine", layout="wide", page_icon="🎬")
+st.set_page_config(page_title="C3 Reach Napoli - Pro AI", layout="wide", page_icon="🎬")
 
-# --- GESTIONE API KEY (SECRETS) ---
+# --- GESTIONE SECRETS ---
 if "GEMINI_API_KEY" in st.secrets:
     API_KEY = st.secrets["GEMINI_API_KEY"]
 else:
     API_KEY = st.sidebar.text_input("Inserisci Gemini API Key", type="password")
 
-# --- SIDEBAR: REGIA ---
+# --- SIDEBAR REGIA ---
 with st.sidebar:
     st.image("https://images.squarespace-cdn.com/content/v1/5f1ef45f8e53995874492379/1596794646734-7B0X8W7L8O7B7X7X7X7X/C3-Global-Logo-Black.png", width=120)
-    st.header("🎮 Controlli Regia")
+    st.header("⚙️ Parametri Camera")
     inerzia = st.slider("Fluidità Camera", 0.01, 0.15, 0.06)
-    dead_zone = st.slider("Dead Zone (Stabilità)", 0.05, 0.25, 0.12)
+    dead_zone = st.slider("Stabilità (Dead Zone)", 0.05, 0.25, 0.12)
     st.divider()
     st.header("🎨 Sottotitoli")
     sub_color = st.color_picker("Colore Testo", "#FFFFFF")
@@ -86,49 +85,56 @@ def render_reel(data, video_path, smooth, dz, color, f_size):
                 final_v = tracked
             
             status_txt.text("💾 Generazione file MP4...")
-            out_name = f"C3_REEL_{int(time.time())}.mp4"
+            out_name = f"REEL_{int(time.time())}.mp4"
             final_v.write_videofile(out_name, codec="libx264", audio_codec="aac", fps=24, logger=None)
             p_bar.progress(100)
-            status_txt.text("✅ Reel pronto per il download!")
+            status_txt.text("✅ Reel pronto!")
             return out_name
 
-# --- LOGICA PRINCIPALE ---
+# --- INTERFACCIA PRINCIPALE ---
 st.title("🚀 C3 Reach: AI Reel Factory")
-drive_url = st.text_input("Link Google Drive (Accesso: Chiunque abbia il link)")
+
+drive_url = st.text_input("Link Google Drive (Accesso pubblico necessario)")
 
 if drive_url and API_KEY:
-    if st.button("📥 Importa e Analizza Video"):
+    if st.button("📥 Analizza predicazione"):
         try:
-            with st.spinner("Download da Drive..."):
+            with st.spinner("Scaricamento da Drive..."):
                 id_drive = drive_url.split('/')[-2] if 'view' in drive_url else drive_url.split('id=')[-1]
                 if os.path.exists("input.mp4"): os.remove("input.mp4")
                 gdown.download(id=id_drive, output="input.mp4", quiet=False)
                 
             if os.path.exists("input.mp4"):
-                # FORZIAMO L'API V1 STABILE
-                genai.configure(api_key=API_KEY, transport='rest')
-                model = genai.GenerativeModel('models/gemini-1.5-flash')
+                # --- FIX 404: FORZIAMO VERSIONE V1 ---
+                genai.configure(api_key=API_KEY)
+                # Chiamata esplicita al modello stabile senza prefissi v1beta
+                model = genai.GenerativeModel('gemini-1.5-flash')
                 
-                with st.status("🧠 Analisi concetti in corso...") as status:
+                with st.status("🧠 L'AI sta studiando il messaggio...") as status:
                     v_ai = genai.upload_file("input.mp4")
+                    
+                    # Attendiamo lo stato ACTIVE
                     while v_ai.state.name == "PROCESSING":
-                        time.sleep(3)
+                        time.sleep(4)
                         v_ai = genai.get_file(v_ai.name)
                     
                     if v_ai.state.name == "ACTIVE":
-                        prompt = "Trova 10 momenti potenti (30-50s) con senso compiuto. Rispondi SOLO JSON: [{'start': 10.5, 'end': 45.0, 'title': 'TITOLO'}]"
+                        prompt = "Trova 10 momenti carismatici (30-50s) con senso logico completo. Rispondi SOLO in formato JSON: [{'start': secondi, 'end': secondi, 'title': 'Titolo'}]"
+                        # Generazione contenuto
                         response = model.generate_content([v_ai, prompt])
                         
-                        # Parsing JSON sicuro
-                        raw = response.text
-                        st.session_state.clips = json.loads(raw[raw.find("["):raw.rfind("]")+1])
+                        # Parsing JSON robusto
+                        raw_response = response.text
+                        json_start = raw_response.find("[")
+                        json_end = raw_response.rfind("]") + 1
+                        st.session_state.clips = json.loads(raw_response[json_start:json_end])
                         st.success("Trovati 10 momenti!")
                     else:
-                        st.error("L'AI non ha accettato il file. Riprova.")
+                        st.error(f"File non pronto. Stato: {v_ai.state.name}")
         except Exception as e:
             st.error(f"Errore tecnico: {e}")
 
-    # --- GRIGLIA ---
+    # --- GRIGLIA ANTEPRIME ---
     if 'clips' in st.session_state:
         st.divider()
         grid = st.columns(2)
@@ -136,7 +142,8 @@ if drive_url and API_KEY:
             with grid[i % 2]:
                 with st.container(border=True):
                     st.subheader(f"Opzione {i+1}: {clip['title']}")
-                    if st.button(f"⚡ Renderizza Reel {i+1}", key=f"r_{i}"):
+                    st.write(f"⏱ Segmento: {clip['start']}s - {clip['end']}s")
+                    if st.button(f"⚡ Crea Reel {i+1}", key=f"r_{i}"):
                         f_out = render_reel(clip, "input.mp4", inerzia, dead_zone, sub_color, font_size)
                         if f_out:
                             with open(f_out, "rb") as f:
