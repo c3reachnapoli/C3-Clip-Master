@@ -1,7 +1,7 @@
 streamlit
 gdown
 google-genai
-mediapipe
+mediapipe==0.10.11
 moviepy
 numpy<2.0.0
 opencv-python-headless
